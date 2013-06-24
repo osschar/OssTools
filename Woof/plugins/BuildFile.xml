@@ -1,0 +1,5 @@
+<library file="WoofServicePlugin.cc"
+         name="OssToolsWoofWoofServicePlugin">
+        <use name="OssTools/Woof"/>
+	<flags EDM_PLUGIN="1"/>
+</library>
