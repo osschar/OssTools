@@ -20,6 +20,7 @@
 //
 
 #include <string>
+#include <stdexcept>
 
 #include "TStopwatch.h"
 #include "TSystem.h"
@@ -40,99 +41,33 @@ namespace edm
 class TRint;
 class TFile;
 class TTree;
+class TBranch;
 
 //------------------------------------------------------------------------------
 
-// #ifndef __CINT__
-
-#include "DataFormats/GeometryVector/interface/GlobalPoint.h"
-#include <map>
-
 namespace Woof
 {
-   struct Poont
+   class WoofModule
    {
-      float x=0, y=0, z=0;
+   protected:
+      TBranch *m_branch; //!
 
-      Poont() {}
-      Poont(const GlobalPoint& gp) : x(gp.x()), y(gp.y()), z(gp.z()) {}
-
-      bool operator<(const Poont& o) const
-      {
-         if (x != o.x) return (x < o.x);
-         if (y != o.y) return (y < o.y);
-         return (z < o.z);
-      }
-
-      float d_sqr(const Poont& o) const
-      {
-         float dx = x - o.x, dy = y - o.y, dz = z - o.z;
-         return dx*dx + dy*dy + dz*dz;
-      }
-
-      float dx_sqr(const Poont& o) const
-      {
-         float dx = x - o.x;
-         return dx*dx;
-      }
-   };
-
-   class TrajCnt
-   {
    public:
-      int XCmagF = 0, XCmagFiigOX = 0, XCmagFiigSX = 0;
+      WoofModule() : m_branch(0) {}
+         
+      virtual ~WoofModule() {}
 
-      TrajCnt() : XCmagF(0), XCmagFiigOX(0), XCmagFiigSX(0) {}
-      TrajCnt(int c, int iiO, int iiS) : XCmagF(c), XCmagFiigOX(iiO), XCmagFiigSX(iiS) {}
+      virtual void book_branches(TTree*) {}
 
-      ClassDefNV(TrajCnt, 1);
+      virtual void begin_event(int event) {}
+      virtual void end_event() {}
+
+      virtual void begin_module(int event, int module, const std::string& name, const std::string& label) {}
+      virtual void end_module() {}
+
+      ClassDef(WoofModule, 1);
    };
-
-   typedef std::map<Poont, int> PoontMap_t;
-
-   class MfCount
-   {
-   public:
-      static const int HitMax = 10;
-
-      bool             in_loop = false; //!
-
-      Int_t            ev,     seq;
-      std::string      module, label;
-
-      Int_t            all = 0, diff = 0, same_ptr = 0, same_val = 0, same_ptr_and_val = 0;
-
-      PoontMap_t       pmap; //!
-      Int_t            map_size,  map_size_5mu,  map_size_25mu;
-      std::vector<int> hit_count, hit_count_5mu, hit_count_25mu;
-
-      std::vector<TrajCnt> trajcnt;
-
-      void count_hits(std::vector<int>& hc);
-      void reduce_hits(float max_R);
-
-      // ----------------------------------------------------------------
-
-      MfCount()  {}
-      ~MfCount() {}
-
-      void begin(int e, int s, const std::string& m, const std::string& l);
-      void end();
-
-      const GlobalPoint* gpp_prev = 0; //!
-      GlobalPoint        gpv_prev;     //!
-
-      void check(const GlobalPoint& gp);
-      void traja(int XCmagF, int XCmagFiigOX, int XCmagFiigSX);
-
-      ClassDefNV(MfCount, 1);
-   };
-
-   extern MfCount mfc;
 }
-
-// #endif
-
 
 //==============================================================================
 //==============================================================================
@@ -165,10 +100,13 @@ public:
    bool shouldProcess() const { return (m_EvCount >= m_EvSkipCount); }
 
 protected:
+   std::vector<Woof::WoofModule*> m_Woofs;
 
 private:
    WoofService(const WoofService&);                  // stop default
    const WoofService& operator=(const WoofService&); // stop default
+
+   typedef std::vector<std::string> vStr_t;
 
    // ---------- member data --------------------------------
 
@@ -177,15 +115,17 @@ private:
 
    int           m_EvSkipCount = 0;
 
-   bool          m_TreeActive    = true;
+   bool          m_TreeActive = true;
+   vStr_t        m_WoofNames;
+
    bool          m_IgPfPerEvent  = true;
    bool          m_IgPfPerModule = false;
 
-   std::string   m_MfcFileName = "MfcWoof.root";
-   TFile        *m_MfcFile = 0;
-   TTree        *m_MfcTree = 0;
+   std::string   m_OutFileName = "OutWoof.root";
+   TFile        *m_OutFile = 0;
+   TTree        *m_OutTree = 0;
 
-   int           m_EvCount = 0;
+   int           m_EvCount  = 0;
    int           m_ModCount = 0;
 
    ProcInfo_t    mProcInfoBegin, mProcInfoEnd;
