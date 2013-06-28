@@ -48,7 +48,7 @@
 
 
 //==============================================================================
-// Beg IgProf stuffe
+// IgProf stuffe
 //==============================================================================
 
 #define HIDDEN      __attribute__((visibility("hidden")))
@@ -135,26 +135,21 @@ igprof_disable_globally(void)
 #undef LIKELY
 #undef UNLIKELY
 
-//==============================================================================
-// End IgProf stuffe
-//==============================================================================
-
-
-namespace Woof
-{
-   MfCount mfc, *mfcp = &mfc;
-}
-
-//
-// constants, enums and typedefs
-//
-
-//
-// static data member definitions
-//
 
 //==============================================================================
-// constructors and destructor
+// Woof modules configuration -- this sux, I know.
+//==============================================================================
+
+// Hmmh ... all is gone now.
+
+//==============================================================================
+//==============================================================================
+// The true WoofService
+//==============================================================================
+//==============================================================================
+
+//==============================================================================
+// Constructors and destructor
 //==============================================================================
 
 WoofService::WoofService(const edm::ParameterSet& ps, edm::ActivityRegistry& ar)
@@ -162,17 +157,18 @@ WoofService::WoofService(const edm::ParameterSet& ps, edm::ActivityRegistry& ar)
    printf("WoofService::WoofService CTOR\n");
 
    m_EvSkipCount   = ps.getUntrackedParameter<int>("skip_count", 0);
-   m_MfcFileName   = ps.getUntrackedParameter<std::string>("file_name", "MfcWoof.root");
+   m_OutFileName   = ps.getUntrackedParameter<std::string>("file_name", "OutWoof.root");
    m_TreeActive    = ps.getUntrackedParameter<bool>("tree_active", true);
+   m_WoofNames     = ps.getUntrackedParameter<vStr_t>("woof_modules", vStr_t());
    m_IgPfPerEvent  = ps.getUntrackedParameter<bool>("igprof_per_event",  true);
    m_IgPfPerModule = ps.getUntrackedParameter<bool>("igprof_per_module", false);
 
    if (m_IgPfPerEvent && m_IgPfPerModule)
       throw cms::Exception("WoofServiceInvalidConfig") << "igprof_per_event and igprof_per_module should not be both true.";
 
-   std::cout <<" gApplication "<< gApplication <<std::endl;
-   std::cout <<" is batch "    << gROOT->IsBatch() <<std::endl;
-   std::cout <<" display "     << gSystem->Getenv("DISPLAY") <<std::endl;
+   // std::cout <<" gApplication "<< gApplication <<std::endl;
+   // std::cout <<" is batch "    << gROOT->IsBatch() <<std::endl;
+   // std::cout <<" display "     << gSystem->Getenv("DISPLAY") <<std::endl;
 
    const char* dummyArgvArray[] = {"cmsRun"};
    char**      dummyArgv = const_cast<char**>(dummyArgvArray);
@@ -182,14 +178,26 @@ WoofService::WoofService(const edm::ParameterSet& ps, edm::ActivityRegistry& ar)
    assert(TApplication::GetApplications()->GetSize());
   
    gROOT->SetBatch(kFALSE);
-   std::cout<<"calling NeedGraphicsLibs()"<<std::endl;
+   // std::cout<<"calling NeedGraphicsLibs()"<<std::endl;
    TApplication::NeedGraphicsLibs();
+
+   for (auto i = m_WoofNames.begin(); i != m_WoofNames.end(); ++i)
+   {
+      std::string classname("Woof::");
+      classname += *i;
+      Woof::WoofModule *wm = (Woof::WoofModule *) TClass::GetClass(classname.c_str())->New();
+      m_Woofs.push_back(wm);
+   }
 
    if (m_TreeActive)
    {
-      m_MfcFile = TFile::Open(m_MfcFileName.c_str(), "recreate");
-      m_MfcTree = new TTree("T", "Woof::MfCount Tree for MF access profiling");
-      m_MfcTree->Branch("M", &Woof::mfcp);
+      m_OutFile = TFile::Open(m_OutFileName.c_str(), "recreate");
+      m_OutTree = new TTree("T", "WoofService Tree holding WoofModule branches");
+
+      for (auto i = m_Woofs.begin(); i != m_Woofs.end(); ++i)
+      {
+         (*i)->book_branches(m_OutTree);
+      }
    }
 
    // ----------------------------------------------------------------
@@ -212,10 +220,10 @@ WoofService::~WoofService()
 
    if (m_TreeActive)
    {
-      m_MfcFile->cd();
-      m_MfcTree->Write();
-      m_MfcFile->Close();
-      delete m_MfcFile;
+      m_OutFile->cd();
+      m_OutTree->Write();
+      m_OutFile->Close();
+      delete m_OutFile;
    }
 }
 
@@ -258,6 +266,11 @@ void WoofService::preProcessEvent(const edm::EventID&, const edm::Timestamp&)
 {
    m_ModCount = 0;
 
+   for (auto i = m_Woofs.begin(); i != m_Woofs.end(); ++i)
+   {
+      (*i)->begin_event(m_EvCount);
+   }
+
    if (m_IgPfPerEvent && shouldProcess())
    {
       igprof_enable_globally();
@@ -272,28 +285,16 @@ void WoofService::postProcessEvent(const edm::Event& iEvent,
       igprof_disable_globally();
    }
 
+   for (auto i = m_Woofs.begin(); i != m_Woofs.end(); ++i)
+   {
+      (*i)->end_event();
+   }
+
    // printf("WoofService::postProcessEvent: Starting TRint loop.\n");
 
    if (m_RunOnEveryEvent)
    {
      m_Rint->Run(kTRUE);
-   }
-
-   // Extract globalTracks, high-purity.
-   // XXXX This was never finished, just ran normal EDM repacker job.
-   {
-      using namespace edm;
-      Handle<View<reco::Track> > tracks;
-      iEvent.getByLabel("generalTracks", tracks); 
-      int cnt = 0;
-
-      for (View<reco::Track>::const_iterator track = tracks->begin();
-           track != tracks->end(); ++track, ++cnt)
-      {
-        if ( ! track->quality(reco::Track::highPurity)) continue;
-
-        // Do something impressive
-      }
    }
 
    ++m_EvCount;
@@ -307,7 +308,10 @@ void WoofService::preModule(const edm::ModuleDescription& md)
 
    if (m_TreeActive && shouldProcess())
    {
-      Woof::mfc.begin(m_EvCount, m_ModCount, md.moduleName(), md.moduleLabel());
+      for (auto i = m_Woofs.begin(); i != m_Woofs.end(); ++i)
+      {
+         (*i)->begin_module(m_EvCount, m_ModCount, md.moduleName(), md.moduleLabel());
+      }
    }
 
    if (m_IgPfPerModule && md.moduleName() == "CkfTrackCandidateMaker")
@@ -327,130 +331,11 @@ void WoofService::postModule(const edm::ModuleDescription& md)
 
    if (m_TreeActive && shouldProcess())
    {
-      Woof::mfc.end();
-
-      if (Woof::mfc.all > 0)
+      for (auto i = m_Woofs.begin(); i != m_Woofs.end(); ++i)
       {
-         m_MfcTree->Fill();
+         (*i)->end_module();
       }
    }
 
    ++m_ModCount;
-}
-
-
-//==============================================================================
-// Woof::MfCounter
-//==============================================================================
-
-void Woof::MfCount::count_hits(std::vector<int>& hc)
-{
-   for (auto i = pmap.begin(); i != pmap.end(); ++i)
-   {
-      ++hc[i->second <= HitMax ? i->second : 0];
-   }
-}
-
-void Woof::MfCount::reduce_hits(float max_R)
-{
-   if (pmap.size() < 2) return;
-
-   const float max_R_sqr = max_R * max_R;
-
-   auto i = pmap.begin();
-   auto j = i;
-   while (i != pmap.end())
-   {
-      ++j;
-      if (j == pmap.end() || i->first.dx_sqr(j->first) > max_R_sqr)
-      {
-         ++i; j = i;
-         continue;
-      }
-      if (i->first.d_sqr(j->first) < max_R_sqr)
-      {
-         auto k = j;
-         i->second += j->second;
-         --j;
-         pmap.erase(k);
-      }
-   }
-}
-
-//------------------------------------------------------------------------------
-
-void Woof::MfCount::begin(int e, int s, const std::string& m, const std::string& l)
-{
-   ev  = e;
-   seq = s;
-   module = m;
-   label  = l;
-
-   // clear map, sizes, counts
-   all = diff = same_ptr = same_val = same_ptr_and_val = 0;
-
-   pmap.clear();
-   map_size = map_size_5mu = map_size_25mu = 0;
-   hit_count     .assign(HitMax + 1, 0);
-   hit_count_5mu .assign(HitMax + 1, 0);
-   hit_count_25mu.assign(HitMax + 1, 0);
-
-   in_loop = true;
-}
-
-void Woof::MfCount::end()
-{
-   in_loop = false;
-
-   if (all == 0) return;
-
-   map_size = (Int_t) pmap.size();
-   count_hits(hit_count);
-
-   reduce_hits(0.0005);
-
-   map_size_5mu = (Int_t) pmap.size();
-   count_hits(hit_count_5mu);
-
-   reduce_hits(0.0025);
-
-   map_size_25mu = (Int_t) pmap.size();
-   count_hits(hit_count_25mu);
-}
-
-//------------------------------------------------------------------------------
-
-void Woof::MfCount::check(const GlobalPoint& gp)
-{
-   if ( ! in_loop) return;
-
-   ++all;
-
-   ++pmap[gp];
-
-   if (&gp == gpp_prev && gp == gpv_prev)
-   {
-      ++same_ptr_and_val;
-   }
-   else if (&gp == gpp_prev)
-   {
-      ++same_ptr;
-   }
-   else if (gpv_prev == gp)
-   {
-      ++same_val;
-   }
-   else
-   {
-      ++diff;
-   }
-   gpp_prev = &gp;
-   gpv_prev = gp;
-}
-
-void Woof::MfCount::traja(int XCmagF, int XCmagFiigOX, int XCmagFiigSX)
-{
-   if ( ! in_loop) return;
-
-   trajcnt.push_back(TrajCnt(XCmagF, XCmagFiigOX, XCmagFiigSX));
 }
