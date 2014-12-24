@@ -9,7 +9,7 @@ echo Woof >> .git/info/sparse-checkout
 git checkout
 ```
 
-# Woof
+## Woof
 
 Utilities for:
 - managing igProf to run on selected modules only;
